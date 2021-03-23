@@ -45,18 +45,18 @@ class QKCutoutView: UIView {
         
         borderLayer.path = UIBezierPath(roundedRect: cutoutRect, cornerRadius: cornerRadius).cgPath
         borderLayer.lineWidth = 3
-        borderLayer.strokeColor = UIColor.white.cgColor
+        borderLayer.strokeColor = UIColor(red: 38.0/255.0, green: 103.0/255.0, blue: 190.0/255.0, alpha: 1.0).cgColor // Original value: UIColor.white.cgColor
         borderLayer.frame = bounds
         
         layer.addSublayer(borderLayer)
     }
     
     fileprivate func calculateCutoutRect() -> CGRect {
-        let documentFrameRatio = CGFloat(1.42) // Passport's size (ISO/IEC 7810 ID-3) is 125mm × 88mm
+        let documentFrameRatio = CGFloat(4.31) // Original value: Passport's size (ISO/IEC 7810 ID-3) is 125mm × 88mm
         let (width, height): (CGFloat, CGFloat)
         
         if bounds.height > bounds.width {
-            width = (bounds.width * 0.9) // Fill 90% of the width
+            width = (bounds.width * 0.95) // Original value: Fill 90% of the width
             height = (width / documentFrameRatio)
         }
         else {
