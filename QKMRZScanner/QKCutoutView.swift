@@ -52,15 +52,25 @@ class QKCutoutView: UIView {
     }
     
     fileprivate func calculateCutoutRect() -> CGRect {
-        let documentFrameRatio = CGFloat(125.0/22.0) // Original value: Passport's size (ISO/IEC 7810 ID-3) is 125mm × 88mm
+        let documentFrameRatio = CGFloat(125.0/15.0) // Original value: Passport's size (ISO/IEC 7810 ID-3) is 125mm × 88mm
         var (width, height): (CGFloat, CGFloat)
         
         width = (bounds.width * 0.9) // Original value: Fill 90% of the width
         height = (width / documentFrameRatio)
         
         let topOffset = (bounds.height - height) * 0.4
-        let leftOffset = (bounds.width - width) / 2
+        let leftOffset = (bounds.width - width) * 0.5
         
         return CGRect(x: leftOffset, y: topOffset, width: width, height: height)
+    }
+    
+    var cutoutRelativeCenter: CGPoint {
+        let currentViewRect = self.calculateCutoutRect()
+        let x = currentViewRect.origin.x + (currentViewRect.width/2)
+        let y = currentViewRect.origin.y + (currentViewRect.height/2)
+        let relX = x/bounds.width
+        let relY = y/bounds.height
+        let relPoint = CGPoint(x: relX, y: relY)
+        return relPoint
     }
 }
