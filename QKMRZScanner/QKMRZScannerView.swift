@@ -24,6 +24,7 @@ public class QKMRZScannerView: UIView {
     fileprivate let videoOutput = AVCaptureVideoDataOutput()
     fileprivate let videoPreviewLayer = AVCaptureVideoPreviewLayer()
     fileprivate let cutoutView = QKCutoutView()
+    fileprivate var currentCamera: AVCaptureDevice! = nil
     fileprivate var isScanningPaused = false
     fileprivate var observer: NSKeyValueObservation?
     @objc public dynamic var isScanning = false
@@ -179,6 +180,7 @@ public class QKMRZScannerView: UIView {
             print("Camera not accessible")
             return
         }
+        self.currentCamera = camera
         
         guard let deviceInput = try? AVCaptureDeviceInput(device: camera) else {
             print("Capture input could not be initialized")
@@ -220,6 +222,31 @@ public class QKMRZScannerView: UIView {
         videoOutput.connection(with: .video)?.videoOrientation = AVCaptureVideoOrientation(orientation: interfaceOrientation)
         videoPreviewLayer.connection?.videoOrientation = AVCaptureVideoOrientation(orientation: interfaceOrientation)
         videoPreviewLayer.frame = bounds
+        self.updateFocus()
+    }
+    
+    fileprivate func updateFocus() {
+        DispatchQueue.main.async {
+            self.focus(at: self.cutoutView.cutoutRelativeCenter)
+        }
+    }
+    
+    fileprivate func focus(at point: CGPoint) {
+        if let device = self.currentCamera {
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusPointOfInterestSupported == true {
+                    device.focusPointOfInterest = point
+                    device.focusMode = .continuousAutoFocus
+                }
+                device.unlockForConfiguration()
+            }
+            catch {
+                print("Error while setting device focus: \(error)")
+            }
+        } else {
+            print("No camera for focus updating")
+        }
     }
     
     fileprivate func preprocessImage(_ image: CGImage) -> CGImage {
@@ -250,6 +277,7 @@ extension QKMRZScannerView: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let cgImage = CMSampleBufferGetImageBuffer(sampleBuffer)?.cgImage else {
             return
         }
+        self.updateFocus()
         
         let documentImage = self.documentImage(from: cgImage)
         let imageRequestHandler = VNImageRequestHandler(cgImage: documentImage, options: [:])
