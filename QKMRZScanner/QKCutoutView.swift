@@ -63,4 +63,14 @@ class QKCutoutView: UIView {
         
         return CGRect(x: leftOffset, y: topOffset, width: width, height: height)
     }
+    
+    var cutoutRelativeCenter: CGPoint {
+        let currentViewRect = self.calculateCutoutRect()
+        let x = currentViewRect.origin.x + (currentViewRect.width/2)
+        let y = currentViewRect.origin.y + (currentViewRect.height/2)
+        let relX = x/bounds.width
+        let relY = y/bounds.height
+        let relPoint = CGPoint(x: relX, y: relY)
+        return relPoint
+    }
 }
