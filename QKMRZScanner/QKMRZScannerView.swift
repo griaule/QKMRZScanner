@@ -12,8 +12,15 @@ import QKMRZParser
 import AudioToolbox
 import Vision
 
-public protocol QKMRZScannerViewDelegate: class {
+public typealias QKMRZQuickResult = (passportNumber: String, birthDate: String, expiryDate: String)
+
+public protocol QKMRZScannerViewDelegate: AnyObject {
     func mrzScannerView(_ mrzScannerView: QKMRZScannerView, didFind scanResult: QKMRZScanResult)
+    func mrzScannerView(_ mrzScannerView: QKMRZScannerView, didFind quickResult: QKMRZQuickResult)
+}
+
+extension QKMRZScannerViewDelegate {
+    func mrzScannerView(_ mrzScannerView: QKMRZScannerView, didFind scanResult: QKMRZScanResult) {}
 }
 
 @IBDesignable
@@ -38,6 +45,8 @@ public class QKMRZScannerView: UIView {
     fileprivate var interfaceOrientation: UIInterfaceOrientation {
         return UIApplication.shared.statusBarOrientation
     }
+    
+    fileprivate var mrzWeights: [Int] = [7, 3, 1]
     
     // MARK: Initializers
     override public init(frame: CGRect) {
@@ -81,16 +90,93 @@ public class QKMRZScannerView: UIView {
         captureSession.stopRunning()
     }
     
+    fileprivate func recognizeVisionTextHandler(completion: @escaping (([String]) -> Void)) -> VNRequestCompletionHandler {
+        return { request, error in
+            guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                return
+            }
+            let recognizedStrings = observations.compactMap { observation in
+                return observation.topCandidates(1).first?.string
+            }
+            completion(recognizedStrings)
+        }
+    }
+    
+    fileprivate func recognizeVisionText(from cgImage: CGImage, completion: @escaping (([String]) -> Void)) {
+        let requestHandler = VNImageRequestHandler(cgImage: cgImage)
+        let request = VNRecognizeTextRequest(completionHandler: self.recognizeVisionTextHandler(completion: completion))
+        do {
+            try requestHandler.perform([request])
+        } catch {
+            print("Unable to perform the requests: \(error).")
+        }
+    }
+    
     // MARK: MRZ
-    fileprivate func mrz(from cgImage: CGImage) -> QKMRZResult? {
-        let mrzTextImage = UIImage(cgImage: preprocessImage(cgImage))
-        let recognizedString = try? tesseract.performOCR(on: mrzTextImage).get()
+    fileprivate func mrz(from cgImage: CGImage, preprocessing: Bool = false, completion: @escaping (([String], QKMRZResult?) -> Void)) {
+        let img = preprocessing ? preprocessImage(cgImage) : cgImage
+        self.recognizeVisionText(from: img) { recognizedText in
+            let result = self.mrzParser.parse(mrzLines: recognizedText)
+            completion(recognizedText, result)
+        }
+    }
+    
+    fileprivate func quickMRZ(from cgImage: CGImage, preprocessing: Bool = false, completion: @escaping (([String], QKMRZQuickResult?) -> Void)) {
+        let img = preprocessing ? preprocessImage(cgImage) : cgImage
+        self.recognizeVisionText(from: img) { recognizedText in
+            for line in recognizedText.reversed() {
+                if let result = self.parseQuickMRZ(secondLine: line) {
+                    completion(recognizedText, result)
+                    return
+                }
+            }
+            completion(recognizedText, nil)
+        }
+    }
+    
+    public func parseQuickMRZ(secondLine: String) -> QKMRZQuickResult? {
+        let str = secondLine
+        let predicate = NSPredicate(format: "SELF MATCHES %@", "([A-Z0-9<]{9}[0-9][A-Z]{3}[0-9]{6}[0-9][MFX<][0-9]{6}[0-9][A-Z0-9<]{14}[0-9<][0-9])")
         
-        if let string = recognizedString, let mrzLines = mrzLines(from: string) {
-            return mrzParser.parse(mrzLines: mrzLines)
+        guard predicate.evaluate(with: str),
+              let passport = self.checkedSubstring(of: str, from: 0, to: 8)?.replacingOccurrences(of: "<", with: ""),
+              let birthDate = self.checkedSubstring(of: str, from: 13, to: 18)?.replacingOccurrences(of: "<", with: ""),
+              let expiryDate = self.checkedSubstring(of: str, from: 21, to: 26)?.replacingOccurrences(of: "<", with: "")
+        else { return nil }
+        
+        let result = QKMRZQuickResult(passportNumber: passport, birthDate: birthDate, expiryDate: expiryDate)
+        return result
+    }
+    
+    fileprivate func charValue(char: Character) -> Int {
+        if char == "<" {
+            return  0
+        }
+        if let number = Int(String(char)), number < 10 {
+            return number
+        }
+        guard let charValue = char.asciiValue else { return 0 }
+        return Int(charValue) - 65 + 10
+    }
+    
+    fileprivate func checkedSubstring(of str: String, from start: Int, to end: Int) -> String? {
+        let sub = self.substring(of: str, from: start, to: end)
+        guard let check = Int(self.substring(of: str, from: end + 1, to: end + 1)) else {
+            return nil
         }
         
-        return nil
+        var sum: Int = 0
+        for (index, char) in sub.enumerated() {
+            let value = self.charValue(char: char)
+            let weight = self.mrzWeights[index % 3]
+            sum += value * weight
+        }
+        
+        return ((sum % 10) == check) ? sub : nil
+    }
+    
+    fileprivate func substring(of str: String, from start: Int, to end: Int) -> String {
+        return String(str[str.index(str.startIndex, offsetBy: start)...str.index(str.startIndex, offsetBy: end)])
     }
     
     fileprivate func mrzLines(from recognizedText: String) -> [String]? {
@@ -269,6 +355,8 @@ public class QKMRZScannerView: UIView {
         
         return CIContext.shared.createCGImage(inputImage, from: inputImage.extent)!
     }
+    
+    var finished: Bool = false
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -298,15 +386,18 @@ extension QKMRZScannerView: AVCaptureVideoDataOutputSampleBufferDelegate {
             let mrzRegionRect = mrzTextRectangles.reduce(into: CGRect.null, { $0 = $0.union($1) })
             
             if let mrzTextImage = documentImage.cropping(to: mrzRegionRect) {
-                if let mrzResult = self.mrz(from: mrzTextImage), mrzResult.allCheckDigitsValid {
-                    self.stopScanning()
-                    
-                    DispatchQueue.main.async {
-                        let enlargedDocumentImage = self.enlargedDocumentImage(from: cgImage)
-                        let scanResult = QKMRZScanResult(mrzResult: mrzResult, documentImage: enlargedDocumentImage)
-                        self.delegate?.mrzScannerView(self, didFind: scanResult)
-                        if self.vibrateOnResult {
-                            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                self.quickMRZ(from: mrzTextImage) { lines, result in
+                    //let text = lines.joined(separator: "\n")
+                    if let mrzResult = result {
+                        guard !self.finished else { return }
+                        self.finished = true
+                        self.stopScanning()
+
+                        DispatchQueue.main.async {
+                            self.delegate?.mrzScannerView(self, didFind: mrzResult)
+                            if self.vibrateOnResult {
+                                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                            }
                         }
                     }
                 }
